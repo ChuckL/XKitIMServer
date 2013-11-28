@@ -23,20 +23,18 @@ Config.RC = new Object();
 Config.Other = new Object();
 Config.Files = new Object();
 Config.Log = new Object();
-Config.HiddenModules = new Object();
+Config.BlacklistedModules = new Object();
+Config.CPUControl = new Object();
+Config.Autosave = new Object();
 
 Config.RC.Enable = true;
-Config.RC.Port = 23;
+Config.RC.Port = 7238;
 Config.RC.username = 'admin';
 Config.RC.password = 'admin';
 Config.RC.motd = '%d: Welcome %u';
 
 Config.WebSocket.Enable = true;
-Config.WebSocket.Port = 99;
-
-Config.Other.stdinEnable = true;
-Config.Other.maintenanceMessage = '';
-Config.Other.DateFormat = "%I:%M %p %m/%d/%Y";
+Config.WebSocket.Port = 7237;
 
 Config.Files.logFile = 'XIMServer.log';
 Config.Files.PINList = 'XIMPins.cfg';
@@ -47,9 +45,23 @@ Config.Log.File = ENUMS.msgTypes.verbose;
 Config.Log.RC = ENUMS.msgTypes.error;
 Config.Log.Console = ENUMS.msgTypes.error;
 
-Config.HiddenModules.File = [];
-Config.HiddenModules.RC = [];
-Config.HiddenModules.Console = [];
+Config.BlacklistedModules.File = [];
+Config.BlacklistedModules.RC = [];
+Config.BlacklistedModules.Console = [];
+Config.BlacklistedModules.isWhitelist = false;
+
+Config.CPUControl.enabled = true;
+Config.CPUControl.interval = 5 * 60 * 1000;
+Config.CPUControl.acceptConnectionBasedOnCPULoad = true;
+
+Config.Autosave.enabled = false;
+Config.Autosave.interval = 5 * 60 * 1000;
+Config.Autosave.saveSync = false;
+
+Config.Other.stdinEnable = true;
+Config.Other.maintenanceMessage = '';
+Config.Other.maxConnections = 5000;
+Config.Other.DateFormat = "%I:%M %p %m/%d/%Y";
 
 
 
@@ -62,8 +74,12 @@ Server.onlineUsers = new Array();
 Server.sendArray = new Array();
 Server.cachedMessages = new Object();
 Server.RCCons = new Array();
+Server.acceptConnections = true;
+Server.os = os = require('os');
 
-function getDS() {
+
+
+function getDateString() {
     try {
         var tempus = require("tempus")
         var D = new tempus();
@@ -85,7 +101,7 @@ function log(S, tag, type, special) {
     if(!(type)) {
         type = ENUMS.msgTypes.log;
     }
-    var s = "[" + tag + "][" + getDS().toLocaleString() + "]" + (S);
+    var s = "[" + tag + "][" + getDateString().toLocaleString() + "]" + (S);
     switch (type) {
         case ENUMS.msgTypes.log:
             s = "[" + ENUMS.msgTypeTexts.log + "]" + s;
@@ -107,7 +123,7 @@ function log(S, tag, type, special) {
         }
     try {
         if(type <= Config.Log.File) {
-            if(Config.HiddenModules.File.indexOf(tag.toLowerCase()) === -1) {
+            if((Config.BlacklistedModules.File.indexOf(tag.toLowerCase()) === -1 && !Config.BlacklistedModules.isWhitelist) || (Config.BlacklistedModules.File.indexOf(tag.toLowerCase()) !== -1 && Config.BlacklistedModules.isWhitelist)) {
                 require("fs").appendFile(Config.Files.logFile, s + "\n", function (err) {
                     if (err) {
                         console.log(("[WAR]Error while writing log: " + err).yellow);
@@ -140,7 +156,7 @@ function log(S, tag, type, special) {
         }
     } catch(e) {
         if(type <= Config.Log.File) {
-            if(Config.HiddenModules.File.indexOf(tag.toLowerCase()) === -1) {
+            if((Config.BlacklistedModules.File.indexOf(tag.toLowerCase()) === -1 && !Config.BlacklistedModules.isWhitelist) || (Config.BlacklistedModules.File.indexOf(tag.toLowerCase()) !== -1 && Config.BlacklistedModules.isWhitelist)) {
                 require("fs").appendFile(Config.Files.logFile, s + "\n", function (err) {
                     if (err) {
                         console.log(("[WAR]Error while writing log: " + err));
@@ -150,12 +166,12 @@ function log(S, tag, type, special) {
         }
     }
     if(type <= Config.Log.Console) {
-        if(Config.HiddenModules.Console.indexOf(tag.toLowerCase()) === -1) {
+        if((Config.BlacklistedModules.Console.indexOf(tag.toLowerCase()) === -1 && !Config.BlacklistedModules.isWhitelist) || (Config.BlacklistedModules.Console.indexOf(tag.toLowerCase()) !== -1 && Config.BlacklistedModules.isWhitelist)) {
             console.log(s);
         }
     }
     if(type <= Config.Log.RC) {
-        if(Config.HiddenModules.RC.indexOf(tag.toLowerCase()) === -1) {
+        if((Config.BlacklistedModules.RC.indexOf(tag.toLowerCase()) === -1 && !Config.BlacklistedModules.isWhitelist) || (Config.BlacklistedModules.RC.indexOf(tag.toLowerCase()) !== -1 && Config.BlacklistedModules.isWhitelist)) {
             for(var i = 0; i<Server.RCCons.length; i++) {
                 if(Server.RCCons[i].loginStep === 2) {
                     Server.RCCons[i].write("[REMOTE]" + s + "\n\r");
@@ -166,7 +182,7 @@ function log(S, tag, type, special) {
 }
 
 log("Setting up required functions and variables for XKit Instant Messenger Server.", "Init");
-function isAllowedOrigin(origin) {
+/*function isAllowedOrigin(origin) {
 	log("Checking if " + origin + " is allowed to connect....", "WS_SourceCheck", ENUMS.msgTypes.debug);
 	valid_origins = ['http://localhost', '127.0.0.1', 'http://www.tumblr.com'];
 	if (valid_origins.indexOf(origin) != -1) {
@@ -175,7 +191,8 @@ function isAllowedOrigin(origin) {
 	}
 	log("Connection refused from " + origin, "WS_SourceCheck", ENUMS.msgTypes.debug);
 	return false;
-}
+}*/
+
 
 function saveData(sync) {
     if(!(sync)) {
@@ -635,7 +652,7 @@ if(Config.RC.Enable) {
                     log('Client ' + c.remoteAddress + ' entered RC Password', "RC", ENUMS.msgTypes.debug);
                     if (c.username.toLowerCase() === Config.RC.username && c.password === Config.RC.password) {
                         c.loginStep = 2;
-                        c.write(Config.RC.motd.replace("%u", c.username).replace('%d', getDS().toLocaleString()) + "\n\r")
+                        c.write(Config.RC.motd.replace("%u", c.username).replace('%d', getDateString().toLocaleString()) + "\n\r")
                         log('Client ' + c.remoteAddress + ' successfully logged in.', "RC", ENUMS.msgTypes.debug);
                     } else {
                         c.failCount += 1;
@@ -655,12 +672,16 @@ if(Config.RC.Enable) {
                 } else if(c.loginStep === 2) {
                     log('Client ' + c.remoteAddress + ' entered Command [' + c.lineBuffer + ']', "RC", ENUMS.msgTypes.debug);
                     switch (c.lineBuffer.toLowerCase().split(" ")[0]) {
+                        case "cpu":
+                            log("CPU Load: " + Server.os.loadavg()[0], "CPU", ENUMS.msgTypes.log);
+                            break;
                         case "help":
-                            c.write("Commands:\n\rhelp     -   Show all commands\n\rexit     -   Shutdown this Server\n\rsave     -   Save Banlist, Pinlist and Cached Messages to Disk\n\rsavesync -   Save synchronously\n\rban      -   Ban a User from the network - Usage: ban <User> [Message]\n\runban    -   Unban a banned User\n\runbanall -   Unban all Users from the network\n\rsay      -   Send Message to every connected client\n\rkick     -   Kick client from the network - Usage: kick <User> [Message]\n\rlist     -   List all online Users\n\rkickall  -   Kick all Users from the network\n\rreset    -   Completely reset the Server, remove all PINs, Bans and cached Messages\n\rdisconnect   -   Disconnect Telnet client from this server\n\r");
+                            c.write("Commands:\n\rhelp     -   Show all commands\n\rexit     -   Shutdown this Server\n\rsave     -   Save Banlist, Pinlist and Cached Messages to Disk\n\rsavesync -   Save synchronously\n\rban      -   Ban a User from the network - Usage: ban <User> [Message]\n\runban    -   Unban a banned User\n\runbanall -   Unban all Users from the network\n\rsay      -   Send Message to every connected client\n\rkick     -   Kick client from the network - Usage: kick <User> [Message]\n\rlist     -   List all online Users\n\rkickall  -   Kick all Users from the network\n\rreset    -   Completely reset the Server, remove all PINs, Bans and cached Messages\n\rdisconnect   -   Disconnect Telnet client from this server\n\rcpu      -   Show CPU Load\n\r");
                             break;
                         case "exit":
                             c.write("Kicking all Users.....\n\r");
-                            kickall("Server is shutting down!");
+                            Server.acceptConnections = false;
+                            kickall("XKit IM Server is shutting down!");
                             setTimeout(function() {
                                 if(Config.WebSocket.Enable) {
                                     c.write("Shutting down XKit Instant Messenger Server.....\n\r");
@@ -797,17 +818,35 @@ if(Config.WebSocket.Enable) {
 
     wsServer = new WebSocketServer({
         httpServer: server,
-        autoAcceptConnections: false // because security matters
+        disableNagleAlgorithm: true,
+        autoAcceptConnections: true,// because security matters
+        maxReceivedMessageSize: "4MiB"
     });
-
-    wsServer.on('request', function(request) {
-        var connection = isAllowedOrigin(request.origin) ? request.accept() : request.reject();
+    
+    wsServer.on('connect', function(connection) {
+        
+        //var connection = isAllowedOrigin(request.origin) ? request.accept() : request.reject();
+        if (Server.acceptConnections === false) {
+            connection.sendUTF("XIM_TOO_MANY");
+            connection.close();
+            return;
+        }
+        if (Config.Other.maxConnections > 0 && Server.onlineUsers.length >= Config.Other.maxConnections) {
+            connection.sendUTF("XIM_TOO_MANY");
+            connection.close();
+            return;
+        }
         connection.xim_clientVersion = Server.ProtocolVersion;
         connection.xim_username = "";
         connection.xim_pin = "";
         connection.auth = false;
         connection.nonce = makeid(127);
-        connection.on('message', function(message) {
+            connection.on('message', function(message) {
+            if (message.type === "binary") {
+                log("Security error, got binary", "WSServer", ENUMS.msgTypes.error);
+                connection.close();
+                return;
+            }
             var response = '';
             log('Received Message from ' + connection.remoteAddress + ': ' + message.utf8Data, "WSServer", ENUMS.msgTypes.debug);
             var msgData = message.utf8Data.split(" ");
@@ -817,7 +856,7 @@ if(Config.WebSocket.Enable) {
                         if(Config.Other.maintenanceMessage === '') {
                             connection.xim_clientVersion = parseInt(msgData[1]);
                             if(connection.xim_clientVersion < Server.ProtocolMinimumRequiredVersion) {
-                                log("Protocol of Client " + connection.remoteAddress + "too old! (Required Version: " + Server.ProtocolMinimumRequiredVersion + ", Client Version: " + connection.xim_clientVersion + ")", "WSServer", ENUMS.msgTypes.debug);
+                                log("Protocol of Client " + connection.remoteAddress + " too old! (Required Version: " + Server.ProtocolMinimumRequiredVersion + ", Client Version: " + connection.xim_clientVersion + ")", "WSServer", ENUMS.msgTypes.debug);
                                 response = 'XIM_UPGRADE ' + Server.ProtocolMinimumRequiredVersion;
                             } else {
                                 log("Received XIM_OPEN Package from " + connection.remoteAddress + ". Version of Client: " + connection.xim_clientVersion, "WSServer", ENUMS.msgTypes.debug);
@@ -840,7 +879,7 @@ if(Config.WebSocket.Enable) {
                                 connection.xim_pin = data[1];
                                 if(Server.onlineUsers.indexOf(data[0]) === -1) {
                                     if(connection.xim_pin === md5(connection.nonce + connection.xim_username + md5(Server.registeredUsers[connection.xim_username]) + "xenixlet")) {
-                                        log("Client " + connection.remoteAddress + " logged in as " + connection.xim_username, "XIMConnection", ENUMS.msgTypes.log);
+                                        log("Client " + connection.remoteAddress + " logged in as " + connection.xim_username, "XIMConnection", ENUMS.msgTypes.debug);
                                         response = "XIM_AUTH_STATUS 1";
                                         connection.auth = true;
                                         Server.onlineUsers.push(data[0]);
@@ -951,7 +990,7 @@ if(Config.WebSocket.Enable) {
           }
         });
         connection.on('close', function(reasonCode, description) {
-            log(connection.remoteAddress + ' has been disconnected. Removing from online User List', "WSServer", ENUMS.msgTypes.log);
+            log(connection.remoteAddress + ' has been disconnected. Removing from online User List', "WSServer", ENUMS.msgTypes.debug);
             var index = Server.onlineUsers.indexOf(connection.xim_username)
             if (index > -1) {
                 Server.onlineUsers.splice(index, 1);
@@ -981,16 +1020,20 @@ if(Config.Other.stdinEnable) {
     stdin.addListener("data", function(d) {
         if(!(stdinLocked)) {
             if(clearDataMode === 0) {
-                log("Entered console command: [" + d.toString().substring(0, d.length-2) + "]", "stdin", ENUMS.msgTypes.debug);
-                switch (d.toString().substring(0, d.length-2).toLowerCase().split(" ")[0]) {
+                log("Entered console command: [" + d.toString().substring(0, d.length-1) + "]", "stdin", ENUMS.msgTypes.debug);
+                switch (d.toString().substring(0, d.length-1).toLowerCase().split(" ")[0]) {
+                    case "cpu":
+                        log("CPU Load: " + Server.os.loadavg()[0], "CPU", ENUMS.msgTypes.log);
+                        break;
                     case "help":
-                        log("Commands:\n\rhelp     -   Show all commands\n\rexit     -   Shutdown this Server\n\rsave     -   Save Banlist, Pinlist and Cached Messages to Disk\n\rsavesync -   Save synchronously\n\rban      -   Ban a User from the network - Usage: ban <User> [Message]\n\runban    -   Unban a banned User\n\runbanall -   Unban all Users from the network\n\rsay      -   Send Message to every connected client\n\rkick     -   Kick client from the network - Usage: kick <User> [Message]\n\rlist     -   List all online Users\n\rkickall  -   Kick all Users from the network\n\rreset    -   Completely reset the Server, remove all PINs, Bans and cached Messages", "stdin", ENUMS.msgTypes.log, true);
+                        log("Commands:\n\rhelp     -   Show all commands\n\rexit     -   Shutdown this Server\n\rsave     -   Save Banlist, Pinlist and Cached Messages to Disk\n\rsavesync -   Save synchronously\n\rban      -   Ban a User from the network - Usage: ban <User> [Message]\n\runban    -   Unban a banned User\n\runbanall -   Unban all Users from the network\n\rsay      -   Send Message to every connected client\n\rkick     -   Kick client from the network - Usage: kick <User> [Message]\n\rlist     -   List all online Users\n\rkickall  -   Kick all Users from the network\n\rreset    -   Completely reset the Server, remove all PINs, Bans and cached Messages\n\rcpu      -   Show CPU Load\n\r", "stdin", ENUMS.msgTypes.log, true);
                         
                         break;
                     case "exit":
                         stdinLocked = true;
                         log("Kicking all Users.....", "stdin", ENUMS.msgTypes.debug);
-                        kickall("Server is shutting down!");
+                        Server.acceptConnections = false;
+                        kickall("XKit IM Server is shutting down!");
                         setTimeout(function() {
                             if(Config.WebSocket.Enable) {
                                 log("Shutting down XKit Instant Messenger Server.....", "stdin", ENUMS.msgTypes.log, true);
@@ -1020,32 +1063,32 @@ if(Config.Other.stdinEnable) {
                         saveData(true);
                         break;
                     case "ban":
-                        var index = Server.bannedUsers.indexOf(d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1])
+                        var index = Server.bannedUsers.indexOf(d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1])
                         if(index === -1) {
-                            if(d.toString().substring(0, d.length-2).toLowerCase().split(" ").length == 2) {
-                                kick(d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1], "You have been banned from this Server");
+                            if(d.toString().substring(0, d.length-1).toLowerCase().split(" ").length == 2) {
+                                kick(d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1], "You have been banned from this Server");
                             } else {
                                 data = "";
-                                for(var i = 2; i<d.toString().substring(0, d.length-2).toLowerCase().split(" ").length; i++) {
-                                    data = data + d.toString().substring(0, d.length-2).split(" ")[i] + " ";
+                                for(var i = 2; i<d.toString().substring(0, d.length-1).toLowerCase().split(" ").length; i++) {
+                                    data = data + d.toString().substring(0, d.length-1).split(" ")[i] + " ";
                                 }
-                                kick(d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1], data);
+                                kick(d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1], data);
                             }
-                            Server.bannedUsers.push(d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1]);
-                            log("User " + d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1] + " has been banned", "stdin", ENUMS.msgTypes.log, true)
+                            Server.bannedUsers.push(d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1]);
+                            log("User " + d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1] + " has been banned", "stdin", ENUMS.msgTypes.log, true)
                             saveData();
                         } else {
-                            log("User " + d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1] + " already banned", "stdin", ENUMS.msgTypes.log, true);
+                            log("User " + d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1] + " already banned", "stdin", ENUMS.msgTypes.log, true);
                         }
                         break;
                     case "unban":
-                        var index = Server.bannedUsers.indexOf(d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1])
+                        var index = Server.bannedUsers.indexOf(d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1])
                         if (index > -1) {
                             Server.bannedUsers.splice(index, 1);
-                            log("User " + d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1] + " has been unbanned", "stdin", ENUMS.msgTypes.log, true);
+                            log("User " + d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1] + " has been unbanned", "stdin", ENUMS.msgTypes.log, true);
                             saveData();
                         } else {
-                            log("User " + d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1] + " is not banned", "stdin", ENUMS.msgTypes.log, true);
+                            log("User " + d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1] + " is not banned", "stdin", ENUMS.msgTypes.log, true);
                         }
                         break;
                     case "unbanall":
@@ -1054,18 +1097,18 @@ if(Config.Other.stdinEnable) {
                         saveData();
                         break;
                     case "say":
-                        log("Sending Message to all Users: " + d.toString().substring(4, d.length-2), "stdin", ENUMS.msgTypes.log, true);
-                        broadcast("XIM_ADMIN_MSG " + d.toString().substring(4, d.length-2));
+                        log("Sending Message to all Users: " + d.toString().substring(4, d.length-1), "stdin", ENUMS.msgTypes.log, true);
+                        broadcast("XIM_ADMIN_MSG " + d.toString().substring(4, d.length-1));
                         break;
                     case "kick":
-                        if(d.toString().substring(0, d.length-2).toLowerCase().split(" ").length == 2) {
-                            kick(d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1], "You have been kicked from this Server");
+                        if(d.toString().substring(0, d.length-1).toLowerCase().split(" ").length == 2) {
+                            kick(d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1], "You have been kicked from this Server");
                         } else {
                             data = "";
-                            for(var i = 2; i<d.toString().substring(0, d.length-2).toLowerCase().split(" ").length; i++) {
-                                data = data + d.toString().substring(0, d.length-2).split(" ")[i] + " ";
+                            for(var i = 2; i<d.toString().substring(0, d.length-1).toLowerCase().split(" ").length; i++) {
+                                data = data + d.toString().substring(0, d.length-1).split(" ")[i] + " ";
                             }
-                            kick(d.toString().substring(0, d.length-2).toLowerCase().split(" ")[1], data);
+                            kick(d.toString().substring(0, d.length-1).toLowerCase().split(" ")[1], data);
                         }
                         break;
                     case "list":
@@ -1078,8 +1121,8 @@ if(Config.Other.stdinEnable) {
                         break;
                     case "kickall":
                         data = "";
-                        for(var i = 1; i<d.toString().substring(0, d.length-2).toLowerCase().split(" ").length; i++) {
-                            data = data + d.toString().substring(0, d.length-2).split(" ")[i] + " ";
+                        for(var i = 1; i<d.toString().substring(0, d.length-1).toLowerCase().split(" ").length; i++) {
+                            data = data + d.toString().substring(0, d.length-1).split(" ")[i] + " ";
                         }
                         kickall(data);
                         break;
@@ -1091,7 +1134,7 @@ if(Config.Other.stdinEnable) {
                         log("This command was not recognized, please try again or type help for more informstion", "stdin", ENUMS.msgTypes.log, true)
                 }        
             } else if (clearDataMode === 1) {
-                if(d.toString().substring(0, d.length-2).toLowerCase() == "y" || d.toString().substring(0, d.length-2).toLowerCase() == "yes") {
+                if(d.toString().substring(0, d.length-1).toLowerCase() == "y" || d.toString().substring(0, d.length-1).toLowerCase() == "yes") {
                     clearCode = makeid(10);
                     log("Exit with wrong input or continue by entering the following code: " + clearCode, "stdin", ENUMS.msgTypes.log, true)
                     clearDataMode = 2;
@@ -1101,7 +1144,7 @@ if(Config.Other.stdinEnable) {
                     clearDataMode = 0;
                 }
             } else if (clearDataMode === 2) {
-                if(d.toString().substring(0, d.length-2) == clearCode) {
+                if(d.toString().substring(0, d.length-1) == clearCode) {
                     log("Resetting Data, please wait.", "stdin", ENUMS.msgTypes.log, true);
                     kickall("The Server is going to be reset.");
                     Server.bannedUsers = new Array();
@@ -1122,4 +1165,35 @@ if(Config.Other.stdinEnable) {
     log("stdin Interface running", "Interfaces", ENUMS.msgTypes.log);
 } else {
     log("stdin Module disabled", "Interfaces", ENUMS.msgTypes.log);
+}
+
+
+if(Config.CPUControl.enabled) {
+    log("Enabling CPU Load Controller", "Init", ENUMS.msgTypes.log);
+    setInterval(function() {
+            var loads = Server.os.loadavg();
+            log("CPU Load: " + loads[0], "CPU", ENUMS.msgTypes.debug);
+            if (loads[0] >= 90) {
+                    // Too much CPU usage!
+                    log("Too much CPU usage! Blocking new connections", "CPU", ENUMS.msgTypes.warning);
+                    if(Config.CPUControl.acceptConnectionBasedOnCPULoad) {
+                        Server.acceptConnections = false;
+                    }
+            } else {
+                if(Config.CPUControl.acceptConnectionBasedOnCPULoad && !Server.acceptConnections) {
+                    log("CPU usage free! Allowing incoming connections", "CPU", ENUMS.msgTypes.warning);
+                    Server.acceptConnections = true;
+                }
+            }
+    }, Config.CPUControl.interval);
+    log("CPU Load Controller enabled. Interval: " + Config.CPUControl.interval / 1000 + "s. Disable connections if load is too high: " + Config.CPUControl.acceptConnectionBasedOnCPULoad + ".", "CPU", ENUMS.msgTypes.log);
+}
+
+if (Config.Autosave.enabled) {
+    log("Enabling Autosave", "Init", ENUMS.msgTypes.log);
+    setInterval(function() {
+        log("Saving Data......", "Autosave", ENUMS.msgTypes.log);
+        saveData(Config.Autosave.saveSync);
+    }, Config.Autosave.interval);
+    log("Autosave enabled. Interval: " + Config.Autosave.interval / 1000 + "s. Sync: " + Config.Autosave.saveSync + ".", "Autosave", ENUMS.msgTypes.log);
 }
