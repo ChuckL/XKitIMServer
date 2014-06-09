@@ -16,8 +16,16 @@ ENUMS.msgTypeTexts = {
     debug: "DBG",
     verbose: "VER",
 }
+ENUMS.CertificateMode = {
+	none: 0,
+	key_cert: 1,
+	pfx: 2
+}
 
 var Config = new Object();
+
+Config.path = "XKitIMConfig.cfg";
+
 Config.WebSocket = new Object();
 Config.RC = new Object();
 Config.Other = new Object();
@@ -26,44 +34,6 @@ Config.Log = new Object();
 Config.BlacklistedModules = new Object();
 Config.CPUControl = new Object();
 Config.Autosave = new Object();
-
-Config.RC.Enable = true;
-Config.RC.Port = 7238;
-Config.RC.username = 'admin';
-Config.RC.password = 'admin';
-Config.RC.motd = '%d: Welcome %u';
-
-Config.WebSocket.Enable = true;
-Config.WebSocket.Port = 7237;
-
-Config.Files.logFile = 'XIMServer.log';
-Config.Files.PINList = 'XIMPins.cfg';
-Config.Files.BanList = 'XIMBans.cfg';
-Config.Files.CachedMessageList = "XIMCachedMessages.cfg";
-
-Config.Log.File = ENUMS.msgTypes.verbose; 
-Config.Log.RC = ENUMS.msgTypes.error;
-Config.Log.Console = ENUMS.msgTypes.error;
-
-Config.BlacklistedModules.File = [];
-Config.BlacklistedModules.RC = [];
-Config.BlacklistedModules.Console = [];
-Config.BlacklistedModules.isWhitelist = false;
-
-Config.CPUControl.enabled = true;
-Config.CPUControl.interval = 5 * 60 * 1000;
-Config.CPUControl.acceptConnectionBasedOnCPULoad = true;
-
-Config.Autosave.enabled = false;
-Config.Autosave.interval = 5 * 60 * 1000;
-Config.Autosave.saveSync = false;
-
-Config.Other.stdinEnable = true;
-Config.Other.maintenanceMessage = '';
-Config.Other.maxConnections = 5000;
-Config.Other.DateFormat = "%I:%M %p %m/%d/%Y";
-
-
 
 var Server = new Array();
 Server.ProtocolVersion = 401;
@@ -181,6 +151,31 @@ function log(S, tag, type, special) {
     }
 }
 
+function writeConfig() {
+	var fs = require("fs");
+	fs.writeFileSync(Config.path, 'Config.RC.Enable = true;\nConfig.RC.Port = 7238;\nConfig.RC.username = "admin";\nConfig.RC.password = "admin";\nConfig.RC.motd = "%d: Welcome %u";\n\nConfig.WebSocket.Enable = true;\nConfig.WebSocket.Secured = true;\nConfig.WebSocket.SecureMode = ENUMS.CertificateMode.key_cert;\nConfig.WebSocket.Cert = "Certificate.cert";\nConfig.WebSocket.Key = "Key.pem";\nConfig.WebSocket.PFX = "Server.pfx";\nConfig.WebSocket.Port = 7237;\n\nConfig.Files.logFile = "XIMServer.log";\nConfig.Files.PINList = "XIMPins.cfg";\nConfig.Files.BanList = "XIMBans.cfg";\nConfig.Files.CachedMessageList = "XIMCachedMessages.cfg";\n\nConfig.Log.File = ENUMS.msgTypes.verbose; \nConfig.Log.RC = ENUMS.msgTypes.error;\nConfig.Log.Console = ENUMS.msgTypes.error;\n\nConfig.BlacklistedModules.File = [];\nConfig.BlacklistedModules.RC = [];\nConfig.BlacklistedModules.Console = [];\nConfig.BlacklistedModules.isWhitelist = false;\n\nConfig.CPUControl.enabled = true;\nConfig.CPUControl.interval = 5 * 60 * 1000;\nConfig.CPUControl.acceptConnectionBasedOnCPULoad = true;\n\nConfig.Autosave.enabled = false;\nConfig.Autosave.interval = 5 * 60 * 1000;\nConfig.Autosave.saveSync = false;\n\nConfig.Other.stdinEnable = true;\nConfig.Other.maintenanceMessage = "";\nConfig.Other.maxConnections = 5000;\nConfig.Other.DateFormat = "%I:%M %p %m/%d/%Y";');
+	log("Config created, loading!", "ConfigLoader");
+}
+
+console.log("\u001B[2J\u001B[0;0f");
+process.title = "XKitIM Server";
+
+function loadConfig() {
+	var fs = require("fs");
+	if (fs.existsSync(Config.path)) {
+		log("Found Config File! Loading...", "ConfigLoader");
+	} else {
+		log("Config File not found, creating!", "ConfigLoader")
+		writeConfig();
+	}
+	dString = fs.readFileSync(Config.path, {encoding: "utf8"});
+	eval(dString);
+	log("Loaded Config File", "ConfigLoader")
+}
+
+log("Loading Config File....", "Init");
+loadConfig();
+
 log("Setting up required functions and variables for XKit Instant Messenger Server.", "Init");
 /*function isAllowedOrigin(origin) {
 	log("Checking if " + origin + " is allowed to connect....", "WS_SourceCheck", ENUMS.msgTypes.debug);
@@ -286,7 +281,7 @@ function loadData() {
         for(var i = 0; i<PINSplit.length; i++) {
             Server.registeredUsers[PINSplit[i].split(":")[0]] = PINSplit[i].split(":")[1];
         }
-        log("Restored " + PINSplit.length + " registered Users", "DataLoader", ENUMS.msgTypes.log);
+        log("Restored " + (PINSplit.length - 1) + " registered Users", "DataLoader", ENUMS.msgTypes.log);
     }
     
     if(require("fs").existsSync(Config.Files.CachedMessageList)) {
@@ -304,7 +299,7 @@ function loadData() {
         for(var i = 0; i<BanSplit.length; i++) {
             Server.bannedUsers.push(BanSplit[i]);
         }
-        log("Restored " + BanSplit.length + " banned Users", "DataLoader", ENUMS.msgTypes.log);
+        log("Restored " + (BanSplit.length - 1) + " banned Users", "DataLoader", ENUMS.msgTypes.log);
     }
 }
 
@@ -608,9 +603,6 @@ function md5(str) {
   return temp.toLowerCase();
 }
 
-console.log("\u001B[2J\u001B[0;0f");
-process.title = "XKitIM Server";
-
 log("Loading PIN and Banned-User Database.....", "Init", ENUMS.msgTypes.log);
 loadData();
 
@@ -805,12 +797,38 @@ if(Config.WebSocket.Enable) {
         console.log("Websocket not installed! Please run npm install websocket first!");
         process.exit(-1);
     }
-    var http = require('http');
-    var server = http.createServer(function(request, response) {
-        log('Received request from ' + request.socket.remoteAddress, "HTTPServer", ENUMS.msgTypes.debug);
-        response.writeHead(404);
-        response.end();
-    });
+    
+	if (Config.WebSocket.Secured && Config.WebSocket.SecureMode !== ENUMS.CertificateMode.none) {
+	
+		var http = require('https');
+		var fs = require('fs');
+		if (Config.WebSocket.SecureMode === ENUMS.CertificateMode.key_cert) {
+			log("Running an Key+Certificate encrypted Websocket Server", "WSServer");
+			var options = {
+				key: fs.readFileSync(Config.WebSocket.Key),
+				cert: fs.readFileSync(Config.WebSocket.Cert)
+			};
+		} else if (Config.WebSocket.SecureMode === ENUMS.CertificateMode.pfx) {
+			log("Running an PFX-File encrypted Websocket Server", "WSServer");
+			var options = {
+				pfx: fs.readFileSync(Config.WebSocket.PFX)
+			};
+		}
+		var server = http.createServer(options, function(request, response) {
+			log('Received request from ' + request.socket.remoteAddress, "HTTPServer", ENUMS.msgTypes.debug);
+			response.writeHead(404);
+			response.end();
+		});
+		
+	} else {
+		log("Running an unencrypted Websocket Server", "WSServer");
+		var http = require('http');
+		var server = http.createServer(function(request, response) {
+			log('Received request from ' + request.socket.remoteAddress, "HTTPServer", ENUMS.msgTypes.debug);
+			response.writeHead(404);
+			response.end();
+		});
+	}
 
     server.listen(Config.WebSocket.Port, function() {
         log('Websocket is listening on port ' + Config.WebSocket.Port + '.', "Interfaces", ENUMS.msgTypes.log);
